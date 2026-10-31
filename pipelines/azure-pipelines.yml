@@ -1,7 +1,9 @@
 # Build and test on pull requests and main.
-# Deploy runs only on main, after the production environment approves it.
-# Create variable group secrets before the first deploy: sqlAdminPassword, swaDeploymentToken.
-# Set azureServiceConnection to the Azure Resource Manager service connection name.
+# Deploy is compiled into a run only when the deploy parameter is true.
+# Azure DevOps validates service connections at compile time, so the deploy
+# tasks stay out of the default run until the scrimhub-azure connection exists.
+# Before the first deploy, create that connection, set sqlAdminPassword and
+# swaDeploymentToken, and queue the pipeline with deploy = true.
 
 trigger:
   branches:
@@ -12,6 +14,12 @@ pr:
   branches:
     include:
       - main
+
+parameters:
+  - name: deploy
+    displayName: Deploy to Azure
+    type: boolean
+    default: false
 
 variables:
   azureServiceConnection: scrimhub-azure
@@ -121,66 +129,67 @@ stages:
             artifact: realtime
             displayName: Publish realtime artifact
 
-  - stage: Deploy
-    displayName: Deploy
-    dependsOn: Build
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-    jobs:
-      - deployment: Production
-        displayName: Production
-        pool:
-          vmImage: ubuntu-latest
-        environment: production
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                - checkout: self
+  - ${{ if eq(parameters.deploy, true) }}:
+    - stage: Deploy
+      displayName: Deploy
+      dependsOn: Build
+      condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+      jobs:
+        - deployment: Production
+          displayName: Production
+          pool:
+            vmImage: ubuntu-latest
+          environment: production
+          strategy:
+            runOnce:
+              deploy:
+                steps:
+                  - checkout: self
 
-                - download: current
-                  artifact: api
+                  - download: current
+                    artifact: api
 
-                - download: current
-                  artifact: web
+                  - download: current
+                    artifact: web
 
-                - download: current
-                  artifact: realtime
+                  - download: current
+                    artifact: realtime
 
-                - task: AzureResourceManagerTemplateDeployment@3
-                  displayName: Deploy Bicep
-                  inputs:
-                    deploymentScope: Subscription
-                    azureResourceManagerConnection: $(azureServiceConnection)
-                    location: $(location)
-                    templateLocation: Linked artifact
-                    csmFile: $(Build.SourcesDirectory)/infra/main.bicep
-                    csmParametersFile: $(Build.SourcesDirectory)/infra/main.bicepparam
-                    overrideParameters: -sqlAdminPassword $(sqlAdminPassword)
-                    deploymentMode: Incremental
+                  - task: AzureResourceManagerTemplateDeployment@3
+                    displayName: Deploy Bicep
+                    inputs:
+                      deploymentScope: Subscription
+                      azureResourceManagerConnection: $(azureServiceConnection)
+                      location: $(location)
+                      templateLocation: Linked artifact
+                      csmFile: $(Build.SourcesDirectory)/infra/main.bicep
+                      csmParametersFile: $(Build.SourcesDirectory)/infra/main.bicepparam
+                      overrideParameters: -sqlAdminPassword $(sqlAdminPassword)
+                      deploymentMode: Incremental
 
-                - task: AzureWebApp@1
-                  displayName: Deploy API
-                  inputs:
-                    azureSubscription: $(azureServiceConnection)
-                    appType: webAppLinux
-                    appName: $(apiAppName)
-                    package: $(Pipeline.Workspace)/api
-                    runtimeStack: DOTNETCORE|10.0
+                  - task: AzureWebApp@1
+                    displayName: Deploy API
+                    inputs:
+                      azureSubscription: $(azureServiceConnection)
+                      appType: webAppLinux
+                      appName: $(apiAppName)
+                      package: $(Pipeline.Workspace)/api
+                      runtimeStack: DOTNETCORE|10.0
 
-                - task: AzureWebApp@1
-                  displayName: Deploy realtime
-                  inputs:
-                    azureSubscription: $(azureServiceConnection)
-                    appType: webAppLinux
-                    appName: $(realtimeAppName)
-                    package: $(Pipeline.Workspace)/realtime
-                    runtimeStack: NODE|22-lts
-                    startUpCommand: node server.js
+                  - task: AzureWebApp@1
+                    displayName: Deploy realtime
+                    inputs:
+                      azureSubscription: $(azureServiceConnection)
+                      appType: webAppLinux
+                      appName: $(realtimeAppName)
+                      package: $(Pipeline.Workspace)/realtime
+                      runtimeStack: NODE|22-lts
+                      startUpCommand: node server.js
 
-                - task: AzureStaticWebApp@0
-                  displayName: Deploy web
-                  inputs:
-                    skip_app_build: true
-                    azure_static_web_apps_api_token: $(swaDeploymentToken)
-                    app_location: $(Pipeline.Workspace)/web
-                    output_location: ""
+                  - task: AzureStaticWebApp@0
+                    displayName: Deploy web
+                    inputs:
+                      skip_app_build: true
+                      azure_static_web_apps_api_token: $(swaDeploymentToken)
+                      app_location: $(Pipeline.Workspace)/web
+                      output_location: ""

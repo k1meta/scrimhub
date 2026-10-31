@@ -74,7 +74,7 @@ Intended resources, created by `infra/main.bicep` when you later run a deploymen
 
 The SQL admin password is a deploy-time parameter. It is not stored in git. Create the Key Vault secret for the API connection string before `/health/ready` can succeed in Azure. `/health` does not need it.
 
-Create the Azure DevOps pipeline from `pipelines/azure-pipelines.yml` against the GitHub repo. Set variable group secrets `sqlAdminPassword` and `swaDeploymentToken`, and set `azureServiceConnection` to the Azure service connection name. The deploy stage targets an environment named `production` and waits for manual approval. Branch policy on `main`: pull request required, and this pipeline must pass.
+Create the Azure DevOps pipeline from `pipelines/azure-pipelines.yml` against the GitHub repo. The default run builds and tests only. Deploy stays out of that run until an Azure Resource Manager service connection named `scrimhub-azure` exists. Queue a run with the `deploy` parameter set to true only after that connection exists, and after `sqlAdminPassword` and `swaDeploymentToken` are set. The deploy stage targets an environment named `production` and waits for manual approval. Branch policy on `main`: pull request required, and this pipeline must pass.
 
 New Azure DevOps organizations often have no free Microsoft-hosted parallelism until you request the grant.
 
