@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/api/">
+    <Project Path="src/api/ScrimHub.Api/ScrimHub.Api.csproj" />
+    <Project Path="src/api/ScrimHub.Application/ScrimHub.Application.csproj" />
+    <Project Path="src/api/ScrimHub.Domain/ScrimHub.Domain.csproj" />
+    <Project Path="src/api/ScrimHub.Infrastructure/ScrimHub.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/api.IntegrationTests/api.IntegrationTests.csproj" />
+    <Project Path="tests/api.UnitTests/api.UnitTests.csproj" />
+  </Folder>
+</Solution>

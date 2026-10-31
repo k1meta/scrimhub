@@ -1,0 +1,19 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+main {
+  flex: 1;
+  padding: 24px;
+}
+
+mat-card {
+  max-width: 32rem;
+}
+
+footer {
+  padding: 16px 24px;
+  color: var(--mat-sys-on-surface-variant);
+}

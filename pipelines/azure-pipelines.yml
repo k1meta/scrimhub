@@ -1,0 +1,186 @@
+# Build and test on pull requests and main.
+# Deploy runs only on main, after the production environment approves it.
+# Create variable group secrets before the first deploy: sqlAdminPassword, swaDeploymentToken.
+# Set azureServiceConnection to the Azure Resource Manager service connection name.
+
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  azureServiceConnection: scrimhub-azure
+  resourceGroupName: scrimhub-rg
+  location: westeurope
+  apiAppName: scrimhub-api
+  realtimeAppName: scrimhub-realtime
+  buildConfiguration: Release
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+stages:
+  - stage: Build
+    displayName: Build and test
+    jobs:
+      - job: Api
+        displayName: API
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: UseDotNet@2
+            displayName: Use .NET 10 SDK
+            inputs:
+              packageType: sdk
+              version: 10.0.x
+
+          - script: dotnet restore ScrimHub.slnx
+            displayName: Restore
+
+          - script: dotnet format ScrimHub.slnx --verify-no-changes --no-restore
+            displayName: Format check
+
+          - script: dotnet build ScrimHub.slnx --configuration $(buildConfiguration) --no-restore
+            displayName: Build
+
+          - script: dotnet test ScrimHub.slnx --configuration $(buildConfiguration) --no-build --collect:"XPlat Code Coverage"
+            displayName: Test
+
+          - script: dotnet list ScrimHub.slnx package --vulnerable --include-transitive
+            displayName: Vulnerable package check
+
+          - script: dotnet publish src/api/ScrimHub.Api/ScrimHub.Api.csproj --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/api
+            displayName: Publish API
+
+          - publish: $(Build.ArtifactStagingDirectory)/api
+            artifact: api
+            displayName: Publish API artifact
+
+      - job: Web
+        displayName: Web
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: NodeTool@0
+            displayName: Use Node 26
+            inputs:
+              versionSpec: 26.x
+
+          - script: npm ci
+            displayName: Install
+            workingDirectory: src/web
+
+          - script: npm run lint
+            displayName: Lint
+            workingDirectory: src/web
+
+          - script: npm test
+            displayName: Test
+            workingDirectory: src/web
+
+          - script: npm run build
+            displayName: Build
+            workingDirectory: src/web
+
+          - publish: src/web/dist/scrimhub/browser
+            artifact: web
+            displayName: Publish web artifact
+
+      - job: Realtime
+        displayName: Realtime
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: NodeTool@0
+            displayName: Use Node 26
+            inputs:
+              versionSpec: 26.x
+
+          - script: npm ci
+            displayName: Install
+            workingDirectory: src/realtime
+
+          - script: npm run lint
+            displayName: Lint
+            workingDirectory: src/realtime
+
+          - script: npm test
+            displayName: Test
+            workingDirectory: src/realtime
+
+          - script: npm run build
+            displayName: Build
+            workingDirectory: src/realtime
+
+          - publish: src/realtime/dist
+            artifact: realtime
+            displayName: Publish realtime artifact
+
+  - stage: Deploy
+    displayName: Deploy
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: Production
+        displayName: Production
+        pool:
+          vmImage: ubuntu-latest
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - download: current
+                  artifact: api
+
+                - download: current
+                  artifact: web
+
+                - download: current
+                  artifact: realtime
+
+                - task: AzureResourceManagerTemplateDeployment@3
+                  displayName: Deploy Bicep
+                  inputs:
+                    deploymentScope: Subscription
+                    azureResourceManagerConnection: $(azureServiceConnection)
+                    location: $(location)
+                    templateLocation: Linked artifact
+                    csmFile: $(Build.SourcesDirectory)/infra/main.bicep
+                    csmParametersFile: $(Build.SourcesDirectory)/infra/main.bicepparam
+                    overrideParameters: -sqlAdminPassword $(sqlAdminPassword)
+                    deploymentMode: Incremental
+
+                - task: AzureWebApp@1
+                  displayName: Deploy API
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    appType: webAppLinux
+                    appName: $(apiAppName)
+                    package: $(Pipeline.Workspace)/api
+                    runtimeStack: DOTNETCORE|10.0
+
+                - task: AzureWebApp@1
+                  displayName: Deploy realtime
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    appType: webAppLinux
+                    appName: $(realtimeAppName)
+                    package: $(Pipeline.Workspace)/realtime
+                    runtimeStack: NODE|22-lts
+                    startUpCommand: node server.js
+
+                - task: AzureStaticWebApp@0
+                  displayName: Deploy web
+                  inputs:
+                    skip_app_build: true
+                    azure_static_web_apps_api_token: $(swaDeploymentToken)
+                    app_location: $(Pipeline.Workspace)/web
+                    output_location: ""
